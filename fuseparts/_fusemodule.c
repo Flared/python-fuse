@@ -920,7 +920,11 @@ flush_func(const char *path)
 }
 
 static int
+#if __APPLE__
+getxattr_func(const char *path, const char *name, char *value, size_t size, u_int32_t position)
+#else
 getxattr_func(const char *path, const char *name, char *value, size_t size)
+#endif
 {
 #if PY_VERSION_HEX < 0x02050000
 	PROLOGUE( PyObject_CallFunction(getxattr_cb, "ssi", path, name, size) )
@@ -1018,8 +1022,13 @@ listxattr_func(const char *path, char *list, size_t size)
 }
 
 static int
+#if __APPLE__
+setxattr_func(const char *path, const char *name, const char *value,
+              size_t size, int flags, u_int32_t position)
+#else
 setxattr_func(const char *path, const char *name, const char *value,
               size_t size, int flags)
+#endif
 {
 	PROLOGUE(
 #ifdef FIX_PATH_DECODING
