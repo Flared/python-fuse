@@ -928,9 +928,6 @@ static int
 getxattr_func(const char *path, const char *name, char *value, size_t size, uint32_t position)
 #else
 static int
-#if __APPLE__
-getxattr_func(const char *path, const char *name, char *value, size_t size, u_int32_t position)
-#else
 getxattr_func(const char *path, const char *name, char *value, size_t size)
 #endif
 {
@@ -1034,10 +1031,6 @@ setxattr_func(const char *path, const char *name,
 		     const char *value, size_t size, int flags, uint32_t position)
 #else
 static int
-#if __APPLE__
-setxattr_func(const char *path, const char *name, const char *value,
-              size_t size, int flags, u_int32_t position)
-#else
 setxattr_func(const char *path, const char *name, const char *value,
               size_t size, int flags)
 #endif
