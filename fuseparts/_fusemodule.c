@@ -1,5 +1,5 @@
 /*
-    Copyright (C) 2001  Jeff Epler  <jepler@unpythonic.dhs.org>
+    Copyright (C) 2001  Jeff Epler  <jepler@gmail.com>
 
     This program can be distributed under the terms of the GNU LGPL.
     See the file COPYING.
@@ -94,12 +94,16 @@
         PyErr_SetString(PyExc_ValueError, "non-decodable filename");
         return NULL;
     }
-
+    static inline Py_ssize_t PyString_Size(PyObject *s) {
+        Py_ssize_t result = -1;
+        (void)PyUnicode_AsUTF8AndSize(s, &result);
+        return result;
+    }
 #else
     #define PyString_AsString PyUnicode_AsUTF8
+    #define PyString_Size PyUnicode_GET_LENGTH
 #endif
     #define PyString_Check PyUnicode_Check
-    #define PyString_Size PyUnicode_GET_LENGTH
 #endif
 
 #ifdef FIX_PATH_DECODING
@@ -683,14 +687,14 @@ read_func(const char *path, char *buf, size_t s, off_t off)
 	if(PyObject_CheckBuffer(v)) {
 		PyObject_GetBuffer(v, &buffer, PyBUF_SIMPLE);
 
-		if(buffer.len <= s) {
+		if((size_t)buffer.len <= s) {
 			memcpy(buf, buffer.buf, buffer.len);
 			ret = buffer.len;
 		}
 
 		PyBuffer_Release(&buffer);
 	} else if(PyBytes_Check(v)) {
-		if(PyBytes_Size(v) > s)
+		if((size_t)PyBytes_Size(v) > s)
 			goto OUT_DECREF;
 		memcpy(buf, PyBytes_AsString(v), PyBytes_Size(v));
 		ret = PyBytes_Size(v);
@@ -919,6 +923,10 @@ flush_func(const char *path)
 	EPILOGUE
 }
 
+#ifdef __APPLE__
+static int
+getxattr_func(const char *path, const char *name, char *value, size_t size, uint32_t position)
+#else
 static int
 #if __APPLE__
 getxattr_func(const char *path, const char *name, char *value, size_t size, u_int32_t position)
@@ -948,7 +956,7 @@ getxattr_func(const char *path, const char *name, char *value, size_t size)
         /* If the size of the value buffer is too small to hold the result,  errno
          * is set to ERANGE.
          */
-		if (PyString_Size(v) > size) {
+		if ((size_t)PyString_Size(v) > size) {
             ret = -ERANGE;
 			goto OUT_DECREF;
         }
@@ -984,9 +992,9 @@ listxattr_func(const char *path, char *list, size_t size)
 	}
 
 	for (;;) {
-		int ilen;
+		size_t ilen;
 
-	        w = PyIter_Next(iter);
+		w = PyIter_Next(iter);
 		if (!w) {
 			ret = lx - list;
 			break;
@@ -1020,7 +1028,11 @@ listxattr_func(const char *path, char *list, size_t size)
 
 	EPILOGUE
 }
-
+#ifdef __APPLE__
+static int
+setxattr_func(const char *path, const char *name,
+		     const char *value, size_t size, int flags, uint32_t position)
+#else
 static int
 #if __APPLE__
 setxattr_func(const char *path, const char *name, const char *value,
@@ -1277,15 +1289,36 @@ poll_func(const char *path, struct fuse_file_info *fi,
 	  struct fuse_pollhandle *ph, unsigned *reventsp)
 {
 	PyObject *pollhandle = Py_None;
+	int ret = -EINVAL;
+	PyObject *v;
 
-	if (ph)
+	PYLOCK();
+
+	if (ph) {
 		pollhandle = PyCapsule_New(ph, pollhandle_name, pollhandle_destructor);
+		if (!pollhandle) {
+			PyErr_Print();
+			goto OUT;
+		}
+	}
 
 #ifdef FIX_PATH_DECODING
-	PROLOGUE(PYO_CALLWITHFI(fi, poll_cb, O&O, &Path_AsDecodedUnicode, path, pollhandle));
+	v = PYO_CALLWITHFI(fi, poll_cb, O&O, &Path_AsDecodedUnicode, path, pollhandle);
 #else
-	PROLOGUE(PYO_CALLWITHFI(fi, poll_cb, sO, path, pollhandle));
+	v = PYO_CALLWITHFI(fi, poll_cb, sO, path, pollhandle);
 #endif
+	if (!v) {
+		PyErr_Print();
+		goto OUT;
+	}
+	if (v == Py_None) {
+		ret = 0;
+		goto OUT_DECREF;
+	}
+	if (PyInt_Check(v)) {
+		ret = PyInt_AsLong(v);
+		goto OUT_DECREF;
+	}
 
 OUT_DECREF:
 	Py_DECREF(v);
@@ -1311,7 +1344,9 @@ pyfuse_loop_mt(struct fuse *f)
 #ifdef WITH_THREAD
 	PyThreadState *save;
 
+#if PY_VERSION_HEX < 0x03070000
 	PyEval_InitThreads();
+#endif
 	interp = PyThreadState_Get()->interp;
 	save = PyEval_SaveThread();
 	err = fuse_loop_mt(f);
